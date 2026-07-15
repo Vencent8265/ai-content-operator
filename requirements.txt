@@ -1,0 +1,31 @@
+# Core
+pydantic>=2.0
+pyyaml>=6.0
+python-dotenv>=1.0
+
+# LLM APIs
+openai>=1.0
+anthropic>=0.30
+
+# Agent frameworks
+langgraph>=0.2
+langgraph-checkpoint>=2.0
+langchain-openai>=0.2
+langchain-core>=0.3
+
+# Data
+chromadb>=0.5
+
+# Testing
+pytest>=8.0
+pytest-asyncio>=0.24
+
+# Web (版本四管理后台)
+fastapi>=0.115
+uvicorn>=0.30
+
+# MCP
+mcp>=1.0
+
+# Utils
+httpx>=0.28
