@@ -22,8 +22,10 @@ from ..utils.compliance_filter import check_compliance, ComplianceResult
 
 logger = logging.getLogger(__name__)
 
-# 微信目标（从 hermes send --list 获取）
+# 推送目标（微信 + 飞书）
 WECHAT_TARGET = "weixin:o9cq80zsimutxfYumlCLtlaoTNN4@im.wechat"
+FEISHU_TARGET = "feishu:oc_434e3f5c39328ab277afc306472846f0"
+ALL_TARGETS = [WECHAT_TARGET, FEISHU_TARGET]
 
 
 # ══════════════════════════════════════════════════════════════
@@ -118,6 +120,7 @@ class ReviewNotifier:
 
     def __init__(self, wechat_target: str | None = None):
         self.wechat_target = wechat_target or WECHAT_TARGET
+        self.targets = ALL_TARGETS
 
     def format_message(self, item: ContentItem) -> str:
         """将 ContentItem 格式化为微信审核消息"""
@@ -163,36 +166,29 @@ class ReviewNotifier:
 
     def send_for_review(self, item: ContentItem) -> bool:
         """
-        将文章推送到微信审核。
-
-        Returns:
-            True 如果发送成功
+        将文章推送到审核（微信 + 飞书）。
         """
         msg = self.format_message(item)
+        success = False
 
-        try:
-            result = subprocess.run(
-                [
-                    "hermes", "send",
-                    "--to", self.wechat_target,
-                    msg,
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode == 0:
-                logger.info(f"审核推送成功: {item.id}")
-                return True
-            else:
-                logger.error(f"审核推送失败: {result.stderr.strip()}")
+        for target in self.targets:
+            try:
+                result = subprocess.run(
+                    ["hermes", "send", "--to", target, msg],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0:
+                    logger.info(f"审核推送成功 [{target}]: {item.id}")
+                    success = True
+                else:
+                    logger.warning(f"审核推送失败 [{target}]: {result.stderr.strip()}")
+            except subprocess.TimeoutExpired:
+                logger.warning(f"审核推送超时 [{target}]")
+            except FileNotFoundError:
+                logger.error("hermes 命令不可用")
                 return False
-        except subprocess.TimeoutExpired:
-            logger.error("审核推送超时")
-            return False
-        except FileNotFoundError:
-            logger.error("hermes 命令不可用")
-            return False
+
+        return success
 
     def handle_reply(self, reply_text: str, item: ContentItem) -> ReviewResult:
         """
@@ -217,25 +213,21 @@ class ReviewNotifier:
         )
 
     def send_review_result(self, result: ReviewResult) -> bool:
-        """
-        将审核结果通知推送回微信（告知用户操作已记录）。
-        """
+        """审核结果回执（双平台）"""
         decision_map = {
             "approved": "✅ 已通过，进入发布流程",
             "rejected": f"❌ 已驳回" + (f"：{result.comments}" if result.comments else ""),
             "needs_revision": f"✏️ 需修改" + (f"：{result.comments}" if result.comments else ""),
-            "unknown": "❓ 未识别的回复，请重新输入「通过」「驳回:原因」或「修改:要求」",
+            "unknown": "❓ 未识别，请回复「通过」「驳回:原因」或「修改:要求」",
         }
-
         msg = decision_map.get(result.decision, "未知操作")
 
-        try:
-            subprocess.run(
-                ["hermes", "send", "--to", self.wechat_target, msg],
-                capture_output=True,
-                timeout=15,
-            )
-            return True
-        except Exception as e:
-            logger.warning(f"审核结果推送失败: {e}")
-            return False
+        for target in self.targets:
+            try:
+                subprocess.run(
+                    ["hermes", "send", "--to", target, msg],
+                    capture_output=True, timeout=15,
+                )
+            except Exception as e:
+                logger.warning(f"审核结果推送失败 [{target}]: {e}")
+        return True
