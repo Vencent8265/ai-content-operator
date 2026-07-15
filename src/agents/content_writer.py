@@ -1,72 +1,53 @@
 """
 内容生成 Agent
 ─────────────
-职责：根据选题生成一篇符合抖音风格的 AI 知识文章。
-输入：话题标签 + 可选的方向描述
-输出：ContentItem（含标题、正文、标签、合规标记）
+职责：根据资讯素材整理成专业 AI 技术分享文章。
+
+v2 改动：
+  - 风格：专业技术分享（机器之心/量子位风格），非抖音口语化
+  - 标题：不用 emoji
+  - 输入：NewsBundle 资讯聚合包
+  - 输出：ContentItem
 """
 
+import json
 import logging
+import re
 from datetime import datetime
-from typing import Optional
 
 from ..models.adapter import ModelRouter, create_default_router
 from ..contracts.schemas import ContentItem
-from ..utils.compliance_filter import check_compliance, ComplianceResult
+from ..utils.compliance_filter import check_compliance
+from ..tools.news_fetcher import NewsBundle
 
 logger = logging.getLogger(__name__)
 
 
 # ══════════════════════════════════════════════════════════════
-# 选题模板库
+# System Prompt（v2 — 专业技术分享风格）
 # ══════════════════════════════════════════════════════════════
 
-# 预定义的选题方向，避免每次从零想话题
-TOPIC_POOL = {
-    "技术解读": [
-        "通俗解释一个大模型概念（如 RAG、Agent、Function Calling）",
-        "对比两个 AI 工具的优缺点",
-        "解读一篇最新的 AI 论文（去技术化，讲给普通人听）",
-    ],
-    "工具教程": [
-        "手把手教你用一个 AI 工具（如 Cursor、ChatGPT、Hermes）",
-        "AI + 某个领域的实用技巧（如 AI + Excel、AI + 写作）",
-    ],
-    "行业新闻": [
-        "本周 AI 领域最重要的 3 件事",
-        "某大厂的 AI 战略解读",
-    ],
-    "观点/思考": [
-        "AI 时代普通人该怎么学习",
-        "一个 AI 从业者的日常是什么样的",
-    ],
-}
-
-
-# ══════════════════════════════════════════════════════════════
-# System Prompt
-# ══════════════════════════════════════════════════════════════
-
-SYSTEM_PROMPT = """你是一个 AI 知识领域的专业内容创作者，负责为抖音平台撰写科普文章。
+SYSTEM_PROMPT = """你是一个 AI 技术领域的专业内容作者。
 
 ## 你的写作风格
-- 口语化、有网感，像在和读者聊天，不要学术论文腔
-- 开篇前 3 句必须抓住注意力（可以用提问、反常识数据、场景描述）
-- 每段不超过 3-4 行手机屏幕，善用短句和换行
-- 适当使用 emoji 增加可读性（但不要过度）
+- 专业技术分享，目标读者是 AI 从业者和技术爱好者
+- 标题：直接点明技术要点，不用 emoji，不用夸张修辞
+- 正文：先给核心结论/要点，再展开解释，最后可加一句展望或思考
+- 语言准确但不学术化——像《机器之心》或《量子位》的风格
+- 不编造数据，不确定的信息标注「目前尚未确认」
 
 ## 内容要求
-- 准确：技术概念不能有硬伤，不确定的地方标注"目前业界还在探索"
-- 实用：读者看完能带走一个知识点或一个能用的技巧
-- 正向：不制造焦虑，不夸大 AI 威胁，不推荐投资建议
-- 字数：300-800 字（抖音图文/口播脚本的最佳长度）
+- 准确：技术事实不能有硬伤
+- 有信息量：读者看完能获得新知识
+- 尊重原文：如果素材来自论文/公告，保留核心观点和技术细节
+- 字数：400-800 字
 
 ## 输出格式
 用 JSON 格式输出，包含：
-- title: 标题（15-30 字，有吸引力）
-- body: 正文（Markdown 格式，不用 # 标题，用自然分段）
+- title: 标题（直接点明主题，无 emoji）
+- body: 正文（Markdown 格式，可用 ## 小标题分段）
 - tags: 3-5 个标签
-- topic: 话题分类（技术解读/工具教程/行业新闻/观点思考）"""
+- topic: 话题分类（行业动态/论文解读/技术分析/工具推荐）"""
 
 
 # ══════════════════════════════════════════════════════════════
@@ -79,8 +60,10 @@ class ContentWriter:
 
     用法:
         writer = ContentWriter()
-        item = writer.generate(topic="技术解读", direction="讲讲什么是 RAG")
-        # item 是一个 ContentItem，可以直接丢给审核流程
+        # 从资讯聚合包生成文章
+        item = writer.generate_from_news(news_bundle)
+        # 或直接指定主题
+        item = writer.generate(topic="技术分析", direction="讲讲 MoE 架构")
     """
 
     def __init__(self, router: ModelRouter | None = None):
@@ -88,105 +71,119 @@ class ContentWriter:
         self._id_counter = 0
 
     def _next_id(self) -> str:
-        """生成文章唯一 ID"""
         self._id_counter += 1
-        date_str = datetime.now().strftime("%Y%m%d")
-        return f"content_{date_str}_{self._id_counter:03d}"
-
-    def _suggest_topic(self, topic: str, direction: str) -> str:
-        """如果有选题池匹配，使用模板；否则直接用用户输入"""
-        if topic in TOPIC_POOL and not direction:
-            import random
-            directions = TOPIC_POOL[topic]
-            direction = random.choice(directions)
-            logger.info(f"从选题池随机选择方向: {direction}")
-        return direction or topic
+        return f"content_{datetime.now().strftime('%Y%m%d')}_{self._id_counter:03d}"
 
     def _parse_json_response(self, raw_text: str) -> dict:
-        """从 LLM 返回的文本中提取 JSON"""
-        import json
-        import re
-
-        # 尝试找 ```json ... ``` 代码块
         json_match = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', raw_text, re.DOTALL)
         if json_match:
             raw_text = json_match.group(1)
-
-        # 尝试找 { ... } 块
         brace_match = re.search(r'\{[\s\S]*\}', raw_text)
         if brace_match:
             raw_text = brace_match.group(0)
+        return json.loads(raw_text)
 
-        try:
-            return json.loads(raw_text)
-        except json.JSONDecodeError:
-            # 最后的 fallback：尝试修复常见问题
-            cleaned = raw_text.replace('\n', ' ').replace('，', ',')
-            try:
-                return json.loads(cleaned)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"无法解析 LLM 返回的 JSON: {e}\n原始内容前 300 字: {raw_text[:300]}")
+    def generate_from_news(self, bundle: NewsBundle, max_items: int = 10) -> ContentItem:
+        """
+        从资讯聚合包生成一篇技术分享文章。
+
+        Args:
+            bundle: NewsFetcher 返回的资讯聚合包
+            max_items: 最多使用多少条资讯作为素材
+
+        Returns:
+            ContentItem
+        """
+        # 格式化资讯为 LLM 可读文本
+        from ..tools.news_fetcher import NewsFetcher
+        fetcher = NewsFetcher()
+        news_text = fetcher.to_formatted_text(bundle, max_items=max_items)
+
+        user_message = f"""以下是今天聚合的最新 AI 资讯：
+
+{news_text}
+
+请从中选取 1-3 条最有价值的资讯，写成一篇专业的技术分享文章。
+可以是一个主题的深入解读，也可以是多条资讯的综合汇总。
+不要逐条罗列新闻——要提炼出对读者有信息增量的内容。"""
+
+        response = self.router.call(
+            task="content_gen",
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            max_tokens=2000,
+            temperature=0.7,
+        )
+
+        parsed = self._parse_json_response(response["content"])
+
+        item = ContentItem(
+            id=self._next_id(),
+            title=parsed.get("title", ""),
+            body=parsed.get("body", ""),
+            tags=parsed.get("tags", []),
+            topic=parsed.get("topic", "行业动态"),
+            platform="douyin",
+            status="draft",
+        )
+
+        # 合规检查
+        compliance = check_compliance(item.title, item.body)
+        if compliance.flags:
+            logger.warning(f"合规标记: {item.id} risk={compliance.risk_level}")
+
+        return item
 
     def generate(
         self,
-        topic: str,
+        topic: str = "技术分析",
         direction: str = "",
         *,
-        extra_instructions: str = "",
         dry_run: bool = False,
+        extra_context: str = "",
     ) -> ContentItem:
         """
-        根据选题生成一篇 AI 知识文章。
+        直接根据主题生成文章（不依赖资讯聚合）。
 
         Args:
-            topic: 话题分类，如 "技术解读"、"工具教程"
-            direction: 具体方向/角度，留空则从选题池随机选
-            extra_instructions: 额外的写作要求（如 "今天要讲 Transformer"）
-            dry_run: True 时不实际调用 LLM，返回模拟数据（测试用）
-
-        Returns:
-            ContentItem: 完整的文章数据，含合规检查结果
+            topic: 话题分类
+            direction: 具体方向
+            dry_run: 测试模式
+            extra_context: 额外上下文（如用户提供的链接或文本）
         """
-        # 1. 确定选题
-        resolved_direction = self._suggest_topic(topic, direction)
-
-        user_message = f"""话题分类：{topic}
-写作方向：{resolved_direction}"""
-
-        if extra_instructions:
-            user_message += f"\n额外要求：{extra_instructions}"
-
-        user_message += "\n\n请生成一篇 AI 知识科普文章。"
-
         if dry_run:
-            # 测试模式，返回模拟数据
             return ContentItem(
                 id=self._next_id(),
-                title="[DRY RUN] 什么是大语言模型？三分钟讲明白",
-                body="大语言模型就是训练了大量文本后，学会了理解语言规律的 AI。\n\n你可以把它理解成一个读过整个图书馆的人。\n\n它能写文章、翻译、写代码，但本质上是「预测下一个词」。",
-                tags=["AI", "大模型", "科普", "ChatGPT"],
+                title="[DRY RUN] DeepSeek-V3 技术报告解读：MoE 架构的新进展",
+                body="DeepSeek 近日发布了 V3 模型的技术报告。该模型采用了混合专家架构（MoE），"
+                     "在推理效率上相比前代有显著提升。报告显示，V3 在多个基准测试中达到了与 "
+                     "GPT-4 相当的性能水平。",
+                tags=["DeepSeek", "MoE", "大模型", "技术解读"],
                 topic=topic,
                 platform="douyin",
                 status="draft",
             )
 
-        # 2. 调用 LLM 生成
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_message},
-        ]
+        user_message = f"""话题：{topic}
+方向：{direction or '请选择一个有价值的 AI 技术主题'}"""
+
+        if extra_context:
+            user_message += f"\n\n参考素材：\n{extra_context}"
 
         response = self.router.call(
             task="content_gen",
-            messages=messages,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
             max_tokens=2000,
-            temperature=0.8,  # 写作任务需要一定创造性
+            temperature=0.7,
         )
 
-        # 3. 解析结果
         parsed = self._parse_json_response(response["content"])
 
-        # 4. 构建 ContentItem
         item = ContentItem(
             id=self._next_id(),
             title=parsed.get("title", ""),
@@ -197,36 +194,19 @@ class ContentWriter:
             status="draft",
         )
 
-        # 5. 合规检查
         compliance = check_compliance(item.title, item.body)
-        if not compliance.passed or compliance.flags:
-            logger.warning(
-                f"内容 {item.id} 合规检查发现问题: "
-                f"risk={compliance.risk_level}, flags={compliance.flags}"
-            )
-
-        # 把合规结果附在 ContentItem 的上下文中（通过 status 和后续处理）
-        # 注意：这里不直接改 ContentItem 的 status，
-        # 由审核 Agent 根据 compliance 结果决定是否打回
+        if compliance.flags:
+            logger.warning(f"合规标记: {item.id} risk={compliance.risk_level}")
 
         return item
 
 
-# ══════════════════════════════════════════════════════════════
 # 便捷函数
-# ══════════════════════════════════════════════════════════════
-
 _default_writer: ContentWriter | None = None
 
 
 def get_writer() -> ContentWriter:
-    """获取全局单例 ContentWriter"""
     global _default_writer
     if _default_writer is None:
         _default_writer = ContentWriter()
     return _default_writer
-
-
-def generate_article(topic: str, direction: str = "", **kwargs) -> ContentItem:
-    """快捷生成一篇文章"""
-    return get_writer().generate(topic, direction, **kwargs)

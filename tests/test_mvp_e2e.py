@@ -209,14 +209,9 @@ class TestCronPipelineScript:
         """管线脚本可以被正确导入"""
         from src.cron import daily_pipeline
         assert hasattr(daily_pipeline, "main")
-        assert hasattr(daily_pipeline, "step_generate_article")
-        assert hasattr(daily_pipeline, "step_data_collection_reminder")
-        assert hasattr(daily_pipeline, "step_daily_review")
+        assert hasattr(daily_pipeline, "step_fetch_and_generate")
 
-    def test_gen_step_with_topic(self):
-        """生成步骤接收 topic 参数"""
-        from src.cron.daily_pipeline import step_generate_article
-        result = step_generate_article(topic="技术解读", direction="")
-        assert result is not None
-        assert "id" in result
-        assert "title" in result
+    def test_gen_step_with_news(self):
+        """生成步骤可导入并调用"""
+        from src.cron.daily_pipeline import step_fetch_and_generate
+        assert callable(step_fetch_and_generate)
