@@ -18,6 +18,8 @@ venv/
 
 # 数据
 data/*.db
+data/*.jsonl
+data/reports/
 *.sqlite
 
 # OS

@@ -1,2 +1,0 @@
-{"model": "deepseek_pro", "task": "content_gen", "input_tokens": 293, "output_tokens": 511, "latency_s": 8.893, "cost_usd": 0.00057202, "success": true, "error": null, "timestamp": "2026-07-15T16:01:36.500012"}
-{"model": "deepseek_pro", "task": "content_gen", "input_tokens": 292, "output_tokens": 419, "latency_s": 7.01, "cost_usd": 0.00049155, "success": true, "error": null, "timestamp": "2026-07-15T16:05:00.019457"}
