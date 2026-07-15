@@ -18,6 +18,7 @@ class ContentItem(BaseModel):
     """一篇文章的完整数据结构"""
     id: str = Field(description="文章唯一标识，如 content_20260715_001")
     title: str = Field(description="文章标题")
+    summary: str = Field(default="", description="文章摘要（抖音文章格式，≤30字）")
     body: str = Field(description="正文内容（Markdown 格式）")
     tags: list[str] = Field(default_factory=list, description="标签，如 ['AI', '大模型', '教程']")
     topic: str = Field(description="话题分类，如 '技术解读'、'行业新闻'、'工具教程'")

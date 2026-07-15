@@ -27,26 +27,29 @@ logger = logging.getLogger(__name__)
 # System Prompt（v2 — 专业技术分享风格）
 # ══════════════════════════════════════════════════════════════
 
-SYSTEM_PROMPT = """你是一个 AI 技术领域的专业内容作者。
+SYSTEM_PROMPT = """你是一个 AI 技术领域的专业内容作者，为抖音文章（长文）撰写内容。
 
-## 你的写作风格
+## 抖音文章格式（严格遵守字数限制）
+- 标题：必须 ≤30 字，超出则被截断。直接点明主题，不用 emoji
+- 摘要：必须 ≤30 字，一句话说清文章看点
+- 正文：500-1000 字，用 ## 小标题分段
+
+## 写作风格
 - 专业技术分享，目标读者是 AI 从业者和技术爱好者
-- 标题：直接点明技术要点，不用 emoji，不用夸张修辞
-- 正文：适合抖音图文模式——拆成 5-8 张卡片，每张 60-100 字，能独立成段
-- 第一张卡片是标题+吸引点，最后一张是总结/互动引导
 - 语言准确但不学术化——像《机器之心》或《量子位》的风格
+- 有小标题分段，每段不宜过长
 - 不编造数据
 
 ## 内容要求
 - 准确：技术事实不能有硬伤
 - 有信息量：读者读完有收获
 - 尊重原文：素材来自论文/公告，保留核心观点
-- 总字数：400-600 字（抖音图文的黄金长度）
 
 ## 输出格式
 用 JSON 格式输出，包含：
-- title: 标题（直接点明主题，无 emoji）
-- body: 正文，用 ### 分隔每张卡片的内容
+- title: 标题（≤30 字，无 emoji）
+- summary: 摘要（≤30 字，吸引点击的一句话）
+- body: 正文（Markdown，可用 ## 小标题分段）
 - tags: 3-5 个标签
 - topic: 话题分类（行业动态/论文解读/技术分析/工具推荐）"""
 
@@ -123,6 +126,7 @@ class ContentWriter:
         item = ContentItem(
             id=self._next_id(),
             title=parsed.get("title", ""),
+            summary=parsed.get("summary", ""),
             body=parsed.get("body", ""),
             tags=parsed.get("tags", []),
             topic=parsed.get("topic", "行业动态"),
@@ -158,7 +162,8 @@ class ContentWriter:
             return ContentItem(
                 id=self._next_id(),
                 title="[DRY RUN] DeepSeek-V3 技术报告解读：MoE 架构的新进展",
-                body="DeepSeek 近日发布了 V3 模型的技术报告。该模型采用了混合专家架构（MoE），"
+                summary="DeepSeek V3 采用 MoE 架构，性能比肩 GPT-4",
+                body="DeepSeek 近日发布了 V3 模型的技术报告。"
                      "在推理效率上相比前代有显著提升。报告显示，V3 在多个基准测试中达到了与 "
                      "GPT-4 相当的性能水平。",
                 tags=["DeepSeek", "MoE", "大模型", "技术解读"],
@@ -188,6 +193,7 @@ class ContentWriter:
         item = ContentItem(
             id=self._next_id(),
             title=parsed.get("title", ""),
+            summary=parsed.get("summary", ""),
             body=parsed.get("body", ""),
             tags=parsed.get("tags", []),
             topic=parsed.get("topic", topic),
