@@ -136,19 +136,20 @@ class TestReviewNotifier:
         assert "修改" in msg
 
     def test_format_message_truncates_long_body(self):
-        """正文过长时截断"""
+        """审核消息应包含本地文件路径"""
         notifier = ReviewNotifier(wechat_target="test_target")
         item = ContentItem(
             id="test_002",
             title="测试",
+            summary="这是摘要",
             body="长" * 500,
             tags=["测试"],
             topic="测试",
         )
         msg = notifier.format_message(item)
-        # 预览不应超过 203 字（200 + "..."）
-        body_lines = msg.split("【正文预览】")[1].split("───────────────")[0]
-        assert len(body_lines) < 250
+        # 新版消息包含本地文件路径而非正文预览
+        assert "本地查看" in msg
+        assert "data/articles/test_002.md" in msg
 
     def test_format_message_shows_compliance_flags(self):
         """合规标记显示在消息中"""

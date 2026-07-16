@@ -15,6 +15,7 @@ import subprocess
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Literal
 
 from ..contracts.schemas import ContentItem, ReviewResult
@@ -121,42 +122,55 @@ class ReviewNotifier:
     def __init__(self, wechat_target: str | None = None):
         self.wechat_target = wechat_target or WECHAT_TARGET
         self.targets = ALL_TARGETS
+        self.articles_dir = Path("data/articles")
+        self.articles_dir.mkdir(parents=True, exist_ok=True)
+
+    def save_article(self, item: ContentItem) -> Path:
+        """保存文章到本地 Markdown 文件，方便在 VSCode 查看全文"""
+        filename = f"{item.id}.md"
+        filepath = self.articles_dir / filename
+        content = f"""# {item.title}
+
+> {item.summary}
+
+**话题**: {item.topic} | **标签**: {' '.join(f'#{t}' for t in item.tags)} | **字数**: {item.word_count}
+
+---
+
+{item.body}
+"""
+        filepath.write_text(content, encoding="utf-8")
+        return filepath
 
     def format_message(self, item: ContentItem) -> str:
-        """将 ContentItem 格式化为微信审核消息"""
-        # 合规检查
+        """审核通知消息（简版，详细内容在本地文件）"""
         compliance = check_compliance(item.title, item.body)
 
-        # 风险标记符号
         risk_icon = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(
             compliance.risk_level, "⚪"
         )
 
         tags_str = " ".join(f"#{t}" for t in item.tags)
 
-        # 正文摘要（截取前 200 字）
-        body_preview = item.body[:200]
-        if len(item.body) > 200:
-            body_preview += "..."
-
         msg = f"""📝 待审核文章
 
 【标题】{item.title}
+【摘要】{item.summary}
 【话题】{item.topic}
 【标签】{tags_str}
 【字数】{item.word_count} 字
 【合规】{risk_icon} {compliance.risk_level}"""
 
         if compliance.flags:
-            for flag in compliance.flags[:3]:  # 最多显示 3 个标记
+            for flag in compliance.flags[:3]:
                 msg += f"\n  ⚠️ {flag}"
 
-        msg += f"""
+        # 本地文件路径
+        filepath = self.save_article(item)
+        msg += f"\n\n💻 本地查看: {filepath.absolute()}"
 
-【正文预览】
-{body_preview}
+        msg += """
 
-───────────────
 请回复审核意见：
   • 回复「通过」→ 发布
   • 回复「驳回:原因」→ 不发布并记录原因

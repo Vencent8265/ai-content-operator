@@ -20,6 +20,7 @@ venv/
 data/*.db
 data/*.jsonl
 data/reports/
+data/articles/
 *.sqlite
 
 # OS
