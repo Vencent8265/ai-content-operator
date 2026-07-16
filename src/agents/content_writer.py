@@ -85,7 +85,7 @@ class ContentWriter:
         brace_match = re.search(r'\{[\s\S]*\}', raw_text)
         if brace_match:
             raw_text = brace_match.group(0)
-        return json.loads(raw_text)
+        return json.loads(raw_text, strict=False)
 
     def generate_from_news(self, bundle: NewsBundle, max_items: int = 10) -> ContentItem:
         """
