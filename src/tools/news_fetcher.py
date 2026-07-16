@@ -188,7 +188,24 @@ class NewsFetcher:
 
         return items
 
-    # ── 聚合 ───────────────────────────────────────────────
+    # ── 图片搜索 ───────────────────────────────────────────
+
+    def find_header_image(self, query: str) -> str:
+        """
+        搜索相关头图 URL（Unsplash 免费）。
+        """
+        try:
+            # Unsplash source API: query 放 URL 里
+            import urllib.parse
+            q = urllib.parse.quote(query[:50])
+            url = f"https://source.unsplash.com/1200x630/?{q},technology"
+            resp = self.client.get(url, follow_redirects=False)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                return resp.headers.get("Location", "")
+            logger.debug(f"Unsplash status: {resp.status_code}")
+        except Exception as e:
+            logger.warning(f"图片搜索失败: {e}")
+        return ""
 
     def fetch_all(
         self,
